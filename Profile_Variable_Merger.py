@@ -38,7 +38,7 @@ def merge_profile_variables():
     print("Merging the variables:\n" + str(variables_to_merge))
     
     #starts creating the file to merge with with all of the RIDs from the roster
-    merged_dataframe = pd.read_csv(working_directory + "\\Datasets\\Raw Data Files\\" + "ROSTER - Roster [ADNI1,GO,2,3,4].csv")
+    merged_dataframe = pd.read_csv(working_directory + "/Datasets/Raw Data Files/" + "ROSTER - Roster [ADNI1,GO,2,3,4].csv")
     merged_dataframe = merged_dataframe[["RID", "PHASE"]]
     merged_dataframe.drop_duplicates(inplace=True)
     
@@ -166,7 +166,6 @@ def merge_profile_variables():
         aggregated_dataframe[variable] = aggregated_dataframe[variable].map(remapping_dictionaries[variable])
         profile_variables.at[variable, "Units"] = str(remapping_dictionaries[variable])
     profile_variables.reset_index(inplace=True)
-    
     
     
     #PRUNING underdeveloped patients

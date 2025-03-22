@@ -5,26 +5,34 @@ ADNI_Dataset object along with a few other specifications necessary for calculat
 I've chosen to include the functions for using rf_gap here, although you could just as easily put them somewhere else
 """
 
-
+import importlib
 import pandas as pd
-from ADNI_Dataset_Class import ADNI_Dataset
 import datetime
 from mashspud import MASH
 from mashspud import SPUD
 import pickle
 import os
 import sys #for exit commands
-import importlib
 from tslearn.metrics import dtw_path
 from dtaidistance import dtw
 import numpy as np
+from pushbullet import Pushbullet #for notifications
+import traceback #to get error traceback if it fails randomly
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import cross_val_score
+from mashspud import triangular_helper as Triangular
+
+#reload any of my modules that I might've changed
+other_modules = ["Progressions_Distance_Functions", "ADNI_Dataset_Class", "rfgap", "Dataset_Validator"]
+for module in other_modules:
+    imported_module = importlib.import_module(module)
+    importlib.reload(imported_module)
+from ADNI_Dataset_Class import ADNI_Dataset
 from rfgap import RFGAP
+from Dataset_Validator import domain_validation
 
-import Progressions_Distance_Functions
-importlib.reload(Progressions_Distance_Functions)
+"""rf_gap distance calculating function to pass into MASH or SPUD"""
 
-
-"""rf_gap distance calculating functions"""
 def use_rf_proximities(tuple):
     """Creates RF proximities similarities
     
@@ -62,7 +70,7 @@ def use_rf_proximities(tuple):
     return 1 - dataA
 
 
-"""Progressions distance calculating functions"""
+"""Progressions distance calculating functions to pass into MASH or SPUD"""
 
 def euclidean_distance(sequence_1, sequence_2):
     length = len(sequence_1)
@@ -165,77 +173,134 @@ def wrapped_dtw_distances(df):
 
 """General distance calculation function"""
 
-def calculate_distances(ADNI_ds, chosen_label, distance_metric, n_pca, source_filename):
-    # information to put in the viewable excel file, make a dataframe out of it
-    variables = pd.Series(ADNI_ds.variables)
-    rids = pd.Series(ADNI_ds.rids, dtype=int)
-    vismonths = pd.Series(ADNI_ds.vismonth, dtype=int)
-    labels = pd.Series(ADNI_ds.labels)
-    distances_info = pd.concat([variables,rids,vismonths,labels], axis=1)
-    distances_info.columns = ['Variables', 'RIDs', 'VISMONTHs', ADNI_ds.label_name]
-    
-    global distance_matrix
-    if ADNI_ds.type == "progression":
-        #it's a progressions dataset which means that we need to put it back together in order to use it
-        #progressions will still do everything that a visits set will do if it isn't recognized as such
-        global progressions_dataframe
-        progressions_dataframe = pd.DataFrame(ADNI_ds.data)
-        multi_index = pd.MultiIndex.from_arrays([rids, vismonths])
-        progressions_dataframe.index = multi_index
-        if distance_metric == "wrapped euclidean":
-            distance_function = wrapped_euclidean_distances
-        if distance_metric == "wrapped dtw":
-            distance_function = wrapped_dtw_distances
-        spud_object = SPUD(verbose=4, n_pca=n_pca)
-        distance_matrix = spud_object.get_SGDM(data = progressions_dataframe, distance_measure = distance_function)
-        ADNI_ds.store_distances(distance_matrix)
+def calculate_distances(source_filename, onehot, selection, deselected_vars, chosen_label, distance_metric, n_pca, rf_gap_label):
+    #if the script fails, it'll let you know, if it succeeds, it'll let you know
+    api_key = "o.lMfHntQrCefa4z3yY0G8GjxCUE6qJWTQ"
+    try:
+        #first, put make a ADNI Dataset object out of the provided selection
+        ADNI_ds = ADNI_Dataset(source_filename, onehot, selection, deselected_vars, chosen_label, rf_gap_variable=rf_gap_label)
         
-        #readjusts the anchors and labels for a progressions set at this point because then you can still validate a progressions set like a visits set
-        global anchorlabels
-        anchorlabels = pd.DataFrame({'RID': ADNI_ds.rids, ADNI_ds.label_name: ADNI_ds.labels})
-        anchorlabels = anchorlabels.groupby('RID', as_index=False)[ADNI_ds.label_name].last() #if it's a visit-wise label, just take the last one
-    
-    elif distance_metric == "use_rf_proximities": #it's not a progression, and we're using rf_gap
-        #TODO make it work for both MASH and SPUD with a few conditionals
-        distance_function = use_rf_proximities
-        data_tuple = (ADNI_ds.data, ADNI_ds.rf_gap_labels)
-        spud_object = SPUD(verbose=4, n_pca=n_pca)
-        distance_matrix = spud_object.get_SGDM(data = data_tuple, distance_measure = distance_function)
-        ADNI_ds.store_distances(distance_matrix)
+        # information to put in the viewable excel file, make a dataframe out of it
+        variables = pd.Series(ADNI_ds.variables)
+        rids = pd.Series(ADNI_ds.rids, dtype=int)
+        vismonths = pd.Series(ADNI_ds.vismonth, dtype=int)
+        labels = pd.Series(ADNI_ds.labels)
+        distances_info = pd.concat([variables,rids,vismonths,labels], axis=1)
+        distances_info.columns = ['Variables', 'RIDs', 'VISMONTHs', ADNI_ds.label_name]
         
-    else: #any other dataset type with any other distance measure
-        #create a SPUD object and use it to calculate the distances
-        spud_object = SPUD(verbose=4, n_pca=n_pca)
-        distance_matrix = spud_object.get_SGDM(data = ADNI_ds.data, distance_measure = distance_metric)
-        ADNI_ds.store_distances(distance_matrix)
-    print(distance_matrix)
+        global distance_matrix
+        if ADNI_ds.type == "progression":
+            #it's a progressions dataset which means that we need to put it back together in order to use it
+            #progressions will still do everything that a visits set will do if it isn't recognized as such
+            progressions_dataframe = pd.DataFrame(ADNI_ds.data)
+            multi_index = pd.MultiIndex.from_arrays([rids, vismonths])
+            progressions_dataframe.index = multi_index
+            if distance_metric == "wrapped euclidean":
+                distance_function = wrapped_euclidean_distances
+            if distance_metric == "wrapped dtw":
+                distance_function = wrapped_dtw_distances
+            spud_object = SPUD(verbose=4, n_pca=n_pca)
+            distance_matrix = spud_object.get_SGDM(data = progressions_dataframe, distance_measure = distance_function)
+            ADNI_ds.store_distances(distance_matrix)
+
+            #store the original dataframe for use later
+            ADNI_ds.progressions_dataframe = progressions_dataframe
+
+            # Group by RID and re-index each group to the maximum size
+            grouped = progressions_dataframe.groupby('RID')
+            max_size = grouped.size().max()
+
+            # Apply reindex to ensure uniform size for all groups
+            reindexed = grouped.apply(
+                lambda x: x.reset_index(drop=True).reindex(range(max_size))
+            )
+
+            # Reshape to wide format
+            reshaped = reindexed.unstack()
+
+            # Convert MultiIndex column tuples into just string column labels
+            reshaped.columns = ['{}_{}'.format(col, i) for col, i in reshaped.columns]
+
+            ADNI_ds.data = np.array(reshaped)
+            
+            #readjusts the anchors and labels for a progressions set at this point because then you can still validate a progressions set like a visits set
+            #we're assuming that the test data from a progressions set isn't going to be useful later, so it isn't reconstructed but you could do it in the same way
+            anchorlabels = pd.DataFrame({'RID': ADNI_ds.rids, ADNI_ds.label_name: ADNI_ds.labels})
+            anchorlabels = anchorlabels.groupby('RID', as_index=False)[ADNI_ds.label_name].last() #if it's a visit-wise label, just take the last one
+            ADNI_ds.rids = anchorlabels.RID
+            ADNI_ds.labels = anchorlabels[ADNI_ds.label_name]
+        
+        elif distance_metric == "use_rf_proximities": #it's not a progression, and we're using rf_gap
+            #TODO make it work for both MASH and SPUD with a few conditionals
+            distance_function = use_rf_proximities
+            data_tuple = (ADNI_ds.data, ADNI_ds.rf_gap_labels)
+            spud_object = SPUD(verbose=4, n_pca=n_pca)
+            distance_matrix = spud_object.get_SGDM(data = data_tuple, distance_measure = distance_function)
+            ADNI_ds.store_distances(distance_matrix)
+            
+        else: #any other dataset type with any other distance measure
+            #create a SPUD object and use it to calculate the distances
+            spud_object = SPUD(verbose=4, n_pca=n_pca)
+            distance_matrix = spud_object.get_SGDM(data = ADNI_ds.data, distance_measure = distance_metric)
+            ADNI_ds.store_distances(distance_matrix)
+
+        # VALIDATE THE DATASET
+        if ADNI_ds.type != "progression":
+            ADNI_ds.dataset_accuracy = domain_validation(ADNI_ds, model="random forest", feature_importance=False, test_set=True)[0]
+            print("Don't forget that this is validating for the whole dataset, for publicaion use come back and try to subset")
+        else:
+            validate_ADNI_ds = ADNI_Dataset(source_filename, onehot, selection, deselected_vars, label_variable=chosen_label, rf_gap_variable="TOTAL13")
+            ADNI_ds.dataset_accuracy = domain_validation(validate_ADNI_ds, model="random forest", feature_importance=False, test_set=True)[0]
+
+        # VALIDATE THE DISTANCE MATRIX
+        distance_matrix = Triangular.reconstruct_symmetric(ADNI_ds.distances)
+        labels = ADNI_ds.labels
+        # Create a k-NN classifier using the precomputed distance matrix
+        knn = KNeighborsClassifier(n_neighbors=7, metric="precomputed")
+        # Perform cross-validation to evaluate performance (we'll need to fix this later to keep whole people in train or test)
+        scores = cross_val_score(knn, distance_matrix, labels, cv=3)
+        # Print and save accuracy scores
+        print(" Distances cross-validation scores:", scores)
+        print(" Distances mean accuracy:", scores.mean())
+        ADNI_ds.distances_accuracy = scores.mean()
+        
+        #export the triangular distance matrix to a pickle file and the options selected to an excel to be retrieved later
+        now = datetime.datetime.now()
+        datetime_string = now.strftime("%Y-%h-%d-@-%I-%M") # we shouldn't be using this too early or too late so we don't use army time, do %H to change it back
+        selection_string = f"selection-{selection}"
+
+        new_filename = "_".join([source_filename[:-5], chosen_label, rf_gap_label, distance_metric, selection_string, datetime_string])
+        export_folder = "Datasets/Distance Matricies/" + new_filename
+        os.makedirs(export_folder, exist_ok=True)
+        
+        with open(export_folder + "/distances.pkl", 'wb') as triangular_export_file:
+            pickle.dump(ADNI_ds, triangular_export_file) #dump the entire adni ds object into a binary file for retrieval
+        
+        # Use ExcelWriter to write the details to specific excel sheets
+        with pd.ExcelWriter(export_folder + "/details.xlsx") as writer:
+            distances_info.to_excel(writer, sheet_name='Details', index=False)
+
+        feedback = f"The new distance matrix for {source_filename} with size {ADNI_ds.distances.shape} has been created and stored in the Distance Matricies folder! See the folder and associated excel file for details."
+        print(feedback)
+        send_pushbullet_notification(api_key, "Distances Calculation Completed", feedback)
+        
+    except Exception as e:
+        send_pushbullet_notification(api_key, "Script Error", f"The following error occurred: {e}")
+        traceback.print_exc()  # This will print the traceback to the console
     
-    #export the triangular distance matrix to a pickle file and the options selected to an excel to be retrieved later
-    now = datetime.datetime.now()
-    datetime_string = now.strftime("%Y-%h-%d-@-%I-%M") # we shouldn't be using this too early or too late so we don't use army time, do %H to change it back
-    
-    new_filename = "_".join([source_filename[:-5], chosen_label, distance_metric, datetime_string])
-    export_folder = "Datasets/Distance Matricies/" + new_filename
-    os.makedirs(export_folder, exist_ok=True)
-    
-    with open(export_folder + "/distances.pkl", 'wb') as triangular_export_file:
-        pickle.dump(ADNI_ds, triangular_export_file) #dump the entire adni ds object into a binary file for retrieval
-    
-    # Use ExcelWriter to write the details to specific excel sheets
-    with pd.ExcelWriter(export_folder + "/details.xlsx") as writer:
-        distances_info.to_excel(writer, sheet_name='Details', index=False)
+
+def send_pushbullet_notification(api_key, title, message):
+    pb = Pushbullet(api_key)
+    pb.push_note(title, message)
 
 if __name__ == "__main__":
     distance_metric = "use_rf_proximities" #any normal metric or "wrapped euclidean", "wrapped dtw", "use_rf_proximities"
     n_pca = 10
-    chosen_label = "DX_bl"
-    filename = "Profile Variables 2024-12-06-19-03.xlsx"
-    onehot = True
-    selection = "200" #just put in the max RID that you want or 'all'
+    chosen_label = "DX"
+    rf_gap_label = "DX2"
+    filename = "Visit Variables 2025-03-05-14-47.xlsx"
+    onehot = False
+    selection = "ADNI3" #just put in the max RID that you want or 'all'
     deselected_vars = []
-    
-    ADNI_ds = ADNI_Dataset(filename, onehot, selection, deselected_vars, chosen_label)
-    calculate_distances(ADNI_ds, chosen_label, distance_metric, n_pca, filename)
-    
-    feedback = f"The new distance matrix for {filename} has been created and stored in the Distance Matricies folder!\nSee the folder and associated excel file for details."
-    print(feedback)
+
+    calculate_distances(filename, onehot, selection, deselected_vars, chosen_label, distance_metric, n_pca, rf_gap_label=rf_gap_label)

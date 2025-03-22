@@ -9,16 +9,30 @@ class ADNI_Dataset:
     A class that doesn't check anything from the dashboard but in fed a dataframe and label 
     name and creates the object from there
     """
-    def __init__(self, filename, onehot, selection, deselected_vars, label_variable = "none", rf_gap_variable = "TOTAL13"):
-        print("Creating ADNI Dataset object...")
+    def __init__(self, filename, onehot, selection, deselected_vars, label_variable = "none", rf_gap_variable = "DX_bl", normalize = True):
         global dataframe
         dataframe = pd.read_excel(r"Datasets/Merged Data Files/" + filename)
-        dataframe['RID'] = dataframe['RID'].fillna(method='ffill') #fills back in the multilevel index so each row has an RID, if applicable
+        dataframe['RID'] = dataframe['RID'].ffill() #fills back in the multilevel index so each row has an RID, if applicable
         self.type = filename.split()[0].lower()
         
         #filter out just the selection specified
-        if selection.startswith("ADNI"): # the user is specifying an ADNI phase
-            dataframe = dataframe[dataframe["PHASE"] == selection]
+        rids_phase_catalog = pd.read_csv("Datasets/RIDS_Phase_Catalog.csv")
+        if selection.startswith("ADNI"): # the user is specifying an ADNI phase, so take all of the people that originated from that phase
+            if selection == "ADNI1":
+                rids_selection = rids_phase_catalog[rids_phase_catalog["PHASE"] == "ADNI1"]["RID"]
+                dataframe = dataframe.loc[dataframe['RID'].isin(rids_selection)]
+            elif selection == "ADNIGO":
+                rids_selection = rids_phase_catalog[rids_phase_catalog["PHASE"] == "ADNIGO"]["RID"]
+                dataframe = dataframe.loc[dataframe['RID'].isin(rids_selection)]
+            elif selection == "ADNI2":
+                rids_selection = rids_phase_catalog[rids_phase_catalog["PHASE"] == "ADNI2"]["RID"]
+                dataframe = dataframe.loc[dataframe['RID'].isin(rids_selection)]
+            elif selection == "ADNI3":
+                rids_selection = rids_phase_catalog[rids_phase_catalog["PHASE"] == "ADNI3"]["RID"]
+                dataframe = dataframe.loc[dataframe['RID'].isin(rids_selection)]
+            elif selection == "ADNI4":
+                rids_selection = rids_phase_catalog[rids_phase_catalog["PHASE"] == "ADNI4"]["RID"]
+                dataframe = dataframe.loc[dataframe['RID'].isin(rids_selection)]
         elif selection.isdigit(): # they specified a maximum RID
             dataframe = dataframe.loc[dataframe['RID'] <= int(selection)]
         elif selection.lower() == "all": # they want everything
@@ -28,9 +42,17 @@ class ADNI_Dataset:
         
         if filename.startswith("Profile") == True: #there are multiple entries for each person here if they participated in multiple ADNI phases
             dataframe = dataframe.groupby('RID').first().reset_index()
+
+
+        # FILTERING FOR EFFECTIVENESS - only use these as far as they actually improve your validation accuracies
+        variable_fullness_requirement = 0 # 0 percent, so it's doing nothing right now
+        dataframe_columns_dropped = dataframe.loc[:, dataframe.isnull().sum() <= (len(dataframe) * (1 - variable_fullness_requirement))]
+        columns_dropped = [column for column in dataframe.columns if column not in dataframe_columns_dropped.columns]
+        deselected_vars.extend(columns_dropped) # just add them to the deselected variables list
+        print(f"Sparse columns dropped: " + str(columns_dropped))
             
-        
-        if filename.startswith("Scans") == False: #variable selection and modification doesn't apply to scans
+        merged_files_without_catalogs = ("Scans", "Freesurfer", "Seeds", "Tau", "Amyloid", "Longitudinal")
+        if filename.startswith(merged_files_without_catalogs) == False: #variable selection and modification doesn't apply to scans
             #exclude deselected variables
             dataframe.drop(deselected_vars, axis=1, inplace=True)
             
@@ -41,33 +63,34 @@ class ADNI_Dataset:
             #does the onehot encoding
             if onehot == True:
                 categorical_variables_list = list(variable_types.loc[variable_types["Type"] == "Categorical"].Variable)
+                print("Onehot encoding the following variables: " + str(categorical_variables_list))
                 dataframe = pd.get_dummies(dataframe, dummy_na=True, columns=categorical_variables_list, dtype=float)
         
+        #an external catalog of all of the potential labels for all of the patients at all of their VISMONTHs
         raw_label_catalog = pd.read_csv(r"Dallan Work/visit_dx_combined_updated.csv")
-
-        #only leaves the label variable and indexers for merging in
+        #creates a subset of that to merge in
         if "VISMONTH" in dataframe.columns:
             label_catalog = raw_label_catalog[["RID", "VISMONTH", label_variable]]
             rf_label_catalog = raw_label_catalog[["RID", "VISMONTH", rf_gap_variable]]
         else:
             label_catalog = raw_label_catalog[["RID", label_variable]]
             rf_label_catalog = raw_label_catalog[["RID", rf_gap_variable]]
-
-        #TODO Have it do the exact same thing that it does adding and then storing the label variable with the rf_gap variable for use when you do use_rf_proximities
         
         #adds the labels by left merging the data with the labels catalog
         global dataframe_with_labels
+        dataframe_with_labels = dataframe
         for variable, catalog in zip([label_variable, rf_gap_variable], [label_catalog, rf_label_catalog]):
-            if variable in dataframe.columns: #determines if the label is just in the dataset
-                dataframe_with_labels = dataframe #no need to add anything
-            elif "VISMONTH" in dataframe.columns: #we're pairing labels to month-wise measurements
-                label_catalog_by_visit = catalog.groupby(['RID',"VISMONTH"]).first().reset_index()
-                dataframe_with_labels = pd.merge(dataframe, label_catalog_by_visit, how='left', on=['RID', 'VISMONTH'])
+            #removed this code to allow rf_gap_variable to be the same as label_variable
+            #if variable in dataframe.columns: #determines if the label is just in the dataset
+                #dataframe_with_labels = dataframe_with_labels #no need to add anything
+            if "VISMONTH" in dataframe.columns: #we're pairing labels to month-wise measurements
+                label_catalog_by_visit = catalog.groupby(['RID',"VISMONTH"]).last().reset_index()
+                dataframe_with_labels = pd.merge(dataframe_with_labels, label_catalog_by_visit, how='left', on=['RID', 'VISMONTH'])
             else: #we're pairing labels to person-wise measurements
-                label_catalog_by_rid = catalog.groupby('RID').first().reset_index()
-                dataframe_with_labels = pd.merge(dataframe, label_catalog_by_rid, how='left', on=['RID'])
+                label_catalog_by_rid = catalog.groupby('RID').last().reset_index()
+                dataframe_with_labels = pd.merge(dataframe_with_labels, label_catalog_by_rid, how='left', on=['RID'])
             #must fill in for nans because there could now fake vismonths in the set that won't have a matching label
-            dataframe_with_labels[variable] = dataframe_with_labels[variable].fillna(method="ffill") 
+            dataframe_with_labels[variable] = dataframe_with_labels[variable].ffill() 
         
         
         self.label_name = label_variable #store the label variable name for later
@@ -119,7 +142,7 @@ class ADNI_Dataset:
         global catalog_columns
         catalog_columns = list(raw_label_catalog.columns)
         catalog_columns.append("PHASE")
-        dataframe.drop(columns=catalog_columns, inplace=True, errors="ignore")
+        dataframe = dataframe.drop(columns=catalog_columns, errors="ignore")
         #does the same with the validation and test data, they still have indexers that will be deleted but we don't need to store them
         val_dataframe = val_dataframe_with_labels.drop(columns=catalog_columns, errors="ignore")
         test_dataframe = test_dataframe_with_labels.drop(columns=catalog_columns, errors="ignore")
@@ -130,6 +153,11 @@ class ADNI_Dataset:
         self.data = np.array(dataframe)
         self.val_data = np.array(val_dataframe)
         self.test_data = np.array(test_dataframe)
+
+        if normalize:
+            self.data = self.normalize_data(self.data)
+            self.val_data = self.normalize_data(self.val_data)
+            self.test_data = self.normalize_data(self.test_data)
 
         #playsound('finished_harp.mp3')
     
@@ -144,6 +172,26 @@ class ADNI_Dataset:
         # Drop the object-type columns
         df = df.drop(columns=object_cols)
         return df
+    
+    def normalize_data(self, data): 
+        """
+        For normalizing each of the data attributes to be between 0 and 1
+        VERY important to note that self.min_vals and self.max_vals are actually only for the test data
+        since it's the one that gets normalized last which was a happy accident and idk when you'll
+        ever need minimums and maximums for either of the other two sets but that's where we are
+        """
+        if isinstance(data, np.ndarray):
+            self.test_min_vals = data.min(axis=0)
+            self.test_max_vals = data.max(axis=0)
+            return (data - self.min_vals) / (self.max_vals - self.min_vals)
+        
+        elif isinstance(data, pd.DataFrame):
+            self.test_min_vals = data.min()
+            self.test_max_vals = data.max()
+            return (data - self.min_vals) / (self.max_vals - self.min_vals)
+        
+        else:
+            raise ValueError("Input should be a NumPy array or a Pandas DataFrame.")
     
     def store_distances(self, distances):
         """Only stores the triangular distances by default, this is for if you wanna change that later"""

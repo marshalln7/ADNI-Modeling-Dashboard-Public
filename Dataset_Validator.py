@@ -20,6 +20,15 @@ from sklearn.metrics import accuracy_score
 
 import pandas as pd
 import numpy as np
+import importlib
+import os
+
+#reload any of my modules that I might've changed
+other_modules = ["ADNI_Dataset_Class"]
+for module in other_modules:
+    imported_module = importlib.import_module(module)
+    importlib.reload(imported_module)
+from ADNI_Dataset_Class import ADNI_Dataset
 
 """ 
 All functions here are made to accept a dataframe with the data columns that are to be used as
@@ -27,25 +36,24 @@ factors and a label series with all of the corresponding labels in it. It is exp
 labels and indexers are already removed from the data dataframe
 """
 
-def domain_validation(ADNI_dataset, model="random forest", feature_importance = False):
+def domain_validation(ADNI_dataset, model="random forest", feature_importance = False, test_set = False):
     """
     Fits the data to a random forest model and assembles all outputs into a string, that is then both
     printed and returned
+
+    test_set specifies if you want to validate on the test set or not, keep False until you're ready to see final results
     """
     print(f"Performing {model} validation on the provided dataset...")
     
     data = ADNI_dataset.data
     feature_names = ADNI_dataset.variables
     label = ADNI_dataset.labels
+    output_str = f""
 
-    
-    
-    output_str = f"Performed {model} validation on the provided dataset\n"
-    
-    
-    global X_train, X_val, y_train, y_val
-    # X_train, X_val, y_train, y_val = train_test_split(data, label, train_size=0.75, random_state=0)
-    X_train, X_val, y_train, y_val = ADNI_dataset.data, ADNI_dataset.val_data, ADNI_dataset.labels, ADNI_dataset.val_labels
+    if test_set == True: # Only validate on the actual test set when this is on
+        X_train, X_val, y_train, y_val = ADNI_dataset.data, ADNI_dataset.test_data, ADNI_dataset.labels, ADNI_dataset.test_labels
+    else:
+        X_train, X_val, y_train, y_val = ADNI_dataset.data, ADNI_dataset.val_data, ADNI_dataset.labels, ADNI_dataset.val_labels
     
     #TODO Change all of this so that it actually uses the partitions instead of cross validating because when you have multiple lines
     #for each person in a dataset it's actually cheating to do that
@@ -81,57 +89,30 @@ def domain_validation(ADNI_dataset, model="random forest", feature_importance = 
     
     # Print and return the constructed string
     print(output_str)
-    return output_str
-    
+    return [validation_score, output_str]
 
-        
+def validate_all_datasets():
+    datasets_list = sorted(os.listdir("Datasets/Merged Data Files"))
+    
+    for dataset in datasets_list:
+        print(dataset) # Just prints the name before the output
+        ADNI_ds = ADNI_Dataset(dataset, onehot, selection, deselected_vars, label_variable=chosen_label, rf_gap_variable="TOTAL13")
+        domain_validation(ADNI_ds, model="random forest", feature_importance=feature_importance)
     
 if __name__ == "__main__":
-    class ADNI_Dataset:
-        def __init__(self, dataframe, label_variable = "none"):
-            #if an unindexed merged ADNI dataframe is fed into this with the label specified, it should do most of the organizational work for you
-            print("Creating ADNI Dataset object...")
-            self.labels = dataframe.pop(label_variable)
-            try:
-                self.rids = dataframe.pop("RID")
-            except KeyError:
-                print("Error, did you try to feed the ADNI Dataset object an indexed dataframe?")
-            try: #tries to pull out the VISMONTH column, returns None if there isn't one
-                self.vismonth = dataframe.pop("VISMONTH")
-            except:
-                self.vismonth = None
-                
-            dataframe = self.drop_object_columns(dataframe)
-            
-            self.variables = list(dataframe.columns)
-            self.data = np.array(dataframe)
-        
-        def drop_object_columns(self, df):
-            # Select columns with dtype 'object'
-            object_cols = df.select_dtypes(include=['object']).columns
-            # Print message showing deleted columns
-            if not object_cols.empty:
-                print(f"Deleted object-type columns: {', '.join(object_cols)}")
-            else:
-                print("No object-type columns found to delete.")
-            # Drop the object-type columns
-            df = df.drop(columns=object_cols)
-            return df
+    chosen_label = "DIAGNOSIS"
+    filename = "Progression Variables 2024-11-09.xlsx"
+    onehot = True
+    selection = "ADNI3" #just put in the max RID that you want or 'all'
+    deselected_vars = []
+    feature_importance = False
+
+    validate_all_datasets()
+    # ADNI_ds = ADNI_Dataset(filename, onehot, selection, deselected_vars, label_variable=chosen_label, rf_gap_variable="TOTAL13")
+    # domain_validation(ADNI_ds, model="random forest", feature_importance=feature_importance)
 
     
-    #iris = load_iris()
-    # knn_validation(iris.data, iris.target)
-    # rf_validation(iris.data, iris.target)
     
-    #profile_df = pd.read_excel(r"Merged Data Files/Profile Variables 2024-09-13.xlsx", nrows=300).fillna(-4)
-    #visit_df = pd.read_excel(r"Merged Data Files/Visit Variables 2024-08-28.xlsx", nrows=None).fillna(-4)
-    scans_df = pd.read_excel(r"Merged Data Files/Scans 2024-8-19.xlsx", nrows=None)
-    #rf_validation(profile.drop(["DX_bl", "PTRACCAT"], axis=1), profile.DX_bl)
-
-    profile = ADNI_Dataset(profile_df, label_variable="DX_bl")
-    #visit = ADNI_Dataset(visit_df, label_variable="DIAGNOSIS")
-    #scans = ADNI_Dataset(scans_df, label_variable="DX_bl") #add more for this later where the permutation feature importance is skipped for a scans set
-    domain_validation(profile, model="random forest", feature_importance=True)
     
 
     

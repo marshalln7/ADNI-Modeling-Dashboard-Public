@@ -116,8 +116,6 @@ if __name__ == "__main__":
     #sample_data = data.loc[data['RID'] <= int(selection)]
     squareform = wrapped_euclidean_distances(sample_data)
     print(squareform)
-else:
-    print("This is not running as __main__")
 
 
 # comparisons2 = [[sequences_minimum_distance(id_1, id_2, method="normdtw") for id_2 in rids[0:10]] for id_1 in rids[0:10]]
