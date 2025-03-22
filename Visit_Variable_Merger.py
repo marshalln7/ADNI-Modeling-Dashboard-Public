@@ -27,7 +27,7 @@ def merge_visit_variables():
     
     #starts by creating an index by visit code and RID that we can merge everything else with
     global merged_dataframe
-    merged_dataframe = pd.read_csv(working_directory + "\\Datasets\\Raw Data Files\\" + "REGISTRY - Registry [ADNI1,GO,2,3].csv")
+    merged_dataframe = pd.read_csv(working_directory + "/Datasets/Raw Data Files/" + "REGISTRY - Registry [ADNI1,GO,2,3].csv")
     merged_dataframe = merged_dataframe[["RID", "VISCODE2", "Phase"]]
     #rename "Phase" to "PHASE"
     merged_dataframe.rename(columns={'Phase': 'PHASE'}, inplace=True)
@@ -52,8 +52,8 @@ def merge_visit_variables():
         #okay so my thinking here is to create a merged ADAS table with all of the question and total scores put together
         #if a variable is called for that is not one of these variables, it will still be there
         #if one of the original ADASSCORES variables is called, it will be taken from the original table
-        adas_adni1 = pd.read_csv(working_directory + "\\Datasets\\Raw Data Files\\" + "ADASSCORES - ADAS Sub-Scores and Total Scores [ADNI1].csv")
-        adas_adniGo23 = pd.read_csv(working_directory + "\\Datasets\\Raw Data Files\\" + "ADAS - Alzheimer's Disease Assessment Scale (ADAS) [ADNIGO,2,3].csv")
+        adas_adni1 = pd.read_csv(working_directory + "/Datasets/Raw Data Files/" + "ADASSCORES - ADAS Sub-Scores and Total Scores [ADNI1].csv")
+        adas_adniGo23 = pd.read_csv(working_directory + "/Datasets/Raw Data Files/" + "ADAS - Alzheimer's Disease Assessment Scale (ADAS) [ADNIGO,2,3].csv")
         #rename the ADNI1 variables
         previous = ["VISCODE", "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q14", "TOTALMOD"]
         new = ["VISCODE2", "Q1SCORE", "Q2SCORE", "Q3SCORE", "Q4SCORE", "Q5SCORE", "Q6SCORE", "Q7SCORE", "Q8SCORE", "Q9SCORE", "Q10SCORE", "Q11SCORE", "Q12SCORE", "Q13SCORE", "TOTAL13"]
@@ -68,11 +68,11 @@ def merge_visit_variables():
             table_df = ADAS_table()
         elif table == "UPENNBIOMK_MASTER":
             file_name = find_string_starting_with(raw_files_list, table)
-            table_df = pd.read_csv(working_directory + "\\Datasets\\Raw Data Files\\" + file_name)
+            table_df = pd.read_csv(working_directory + "/Datasets/Raw Data Files/" + file_name)
             table_df = table_df[table_df["BATCH"] == "MEDIAN"]
         else:
             file_name = find_string_starting_with(raw_files_list, table)
-            table_df = pd.read_csv(working_directory + "\\Datasets\\Raw Data Files\\" + file_name)
+            table_df = pd.read_csv(working_directory + "/Datasets/Raw Data Files/" + file_name)
         #add the indexing variables to the list of variables to get from the table
         id = "RID"
         #same tables, especially the ADNI1 tables, will only have VISCODE but in those cases VISCODE and VISCODE 2 are interchangable
@@ -108,24 +108,27 @@ def merge_visit_variables():
     merged_dataframe.dropna(how="all", inplace = True)
 
     #let's try interpolating and see how that improves our score
-    def fill_sparse_visits(small_df): 
-        small_df.interpolate(axis=0, method="linear", limit_direction="both", inplace=True)
-        return small_df
+    # def fill_sparse_visits(small_df): 
+    #     small_df.interpolate(axis=0, method="linear", limit_direction="both", inplace=True)
+    #     return small_df
     
-    merged_dataframe = merged_dataframe.groupby("RID", group_keys = False).apply(fill_sparse_visits)
+    # merged_dataframe = merged_dataframe.groupby("RID", group_keys = False).apply(fill_sparse_visits)
     
+    #Very temporary, come back and remove this
+    merged_dataframe = merged_dataframe.dropna(how="any")
     
     #export the new merged file to the Marged Data Files folder
     now = datetime.datetime.now()
     date_string = now.strftime("%Y-%m-%d-%H-%M")
     new_filename = "Visit Variables " + date_string + ".xlsx"
-    file_path = "Datasets\\Merged Data Files\\" + new_filename
+    file_path = "Datasets/Merged Data Files/" + new_filename
     
     with pd.ExcelWriter(file_path) as writer:
         merged_dataframe.to_excel(writer, sheet_name='Visit Variables', na_rep= "NaN")
         visit_variables.to_excel(writer, sheet_name='Variable Catalog', index=False)
     
-    os.startfile(file_path)
+    if os.name == "nt":
+        os.startfile(file_path)
     
 if __name__ == "__main__":
     merge_visit_variables()
